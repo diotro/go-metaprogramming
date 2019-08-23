@@ -1,10 +1,9 @@
-package example_test
+package example
 
 import (
 	"testing"
 
 	. "github.com/onsi/gomega"
-	"github.com/julian-zucker/go-ast-magic"
 )
 
 func TestAdd(t *testing.T) {

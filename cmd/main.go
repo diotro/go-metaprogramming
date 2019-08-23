@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	src, err := ioutil.ReadFile("src/example/example_test.go")
+	src, err := ioutil.ReadFile("pkg/example/example_test.go")
 	if err != nil {
 		panic("Could not read example.go")
 	}
