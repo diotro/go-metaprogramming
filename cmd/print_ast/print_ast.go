@@ -12,7 +12,7 @@ import (
 
 func main() {
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "pkg/example/example_ginkgo.go", nil, parser.ParseComments)
+	file, err := parser.ParseFile(fset, "pkg/example/example_test.go", nil, parser.ParseComments)
 	if err != nil {
 		log.Fatalf("Failed to parse file: %s", err)
 	}
@@ -22,10 +22,10 @@ func main() {
 		genDecl, ok := decl.(*ast.GenDecl)
 		if ok {
 			for _, spec := range genDecl.Specs {
-				fmt.Printf("%#v\n", spec)
+				fmt.Printf("%+v\n", spec)
 				valueSpec, ok := spec.(*ast.ValueSpec)
 				if ok {
-					fmt.Printf("%#v\n", valueSpec.Names[0].Obj)
+					fmt.Printf("%+v\n", valueSpec.Names[0].Obj)
 				}
 			}
 		}
@@ -35,5 +35,4 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
 }
