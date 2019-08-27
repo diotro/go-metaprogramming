@@ -31,79 +31,29 @@ func main() {
 		fmt.Printf("Found test function %s on line %d\n", fn.Name.Name, fset.Position(fn.Pos()).Line)
 
 		// first: extract each test case and transform it to Ginkgo style
-		transformedTestCases := make([]ast.Stmt, len(fn.Body.List))
-		for i, statement := range fn.Body.List {
-			expr, ok := statement.(*ast.ExprStmt)
-			if !ok {
-				continue
-			}
-			callExpr, ok := expr.X.(*ast.CallExpr)
-			if !ok {
-				continue
-			}
-
-			// Make sure that this has shape `t.Run`
-			selector, ok := callExpr.Fun.(*ast.SelectorExpr)
-			if !ok {
-				continue
-			}
-			exprIdentifier, ok := selector.X.(*ast.Ident)
-			if !ok {
-				continue
-			}
-			if !(exprIdentifier.Name == "t" && selector.Sel.Name == "Run") {
-				continue
-			}
-			fmt.Printf("Found t.Run on line %d\n", fset.Position(callExpr.Pos()).Line)
-
-			// Extract the test case name
-			testCaseName := callExpr.Args[0]
-			testCaseFuncStmt := callExpr.Args[1]
-
-			testCaseFunc, ok := testCaseFuncStmt.(*ast.FuncLit)
-			if !ok {
-				continue
-			}
-			testCaseFuncStmts := testCaseFunc.Body.List
-			transformedStmts := make([]ast.Stmt, 0)
-			for _, stmt := range testCaseFuncStmts {
-				// Remove `g := NewGomegaWithT(t)`
-				if isGEqualNewGomega(stmt) {
-					continue
-				}
-
-				removed, ok := removeGDot(stmt)
-				if ok {
-					// If we could remove the `g.`, add the transformed statement
-					transformedStmts = append(transformedStmts, removed)
-				} else {
-					// The removal didn't work, this must be some other shape
-					// of statement, so keep it around
-					transformedStmts = append(transformedStmts, stmt)
-				}
-			}
-			transformedTestCases[i] = &ast.ExprStmt{
-				X: &ast.CallExpr{
-					Fun: &ast.Ident{Name: "It"},
-					Args: []ast.Expr{
-						testCaseName,
-						&ast.FuncLit{
-							Type: thunkFunctionType,
-							Body: &ast.BlockStmt{List: transformedStmts},
-						},
-					},
-				},
-			}
+		transformedTestCasesBlockStmt := &ast.BlockStmt{
+			List: transformTestCases(fn.Body.List),
 		}
 
-		transformedTestCasesBlockStmt := &ast.BlockStmt{
-			List: transformedTestCases,
+		testNameString := &ast.BasicLit{
+			// Need to wrap in "" to turn from identifier to string. Also, remove Test.
+			Value: "\"" + strings.Replace(fn.Name.Name, "Test", "", 1) + "\"",
+		}
+
+		// This is the call to Describe(name, …)
+		describeCall := &ast.CallExpr{
+			Fun: &ast.Ident{Name: "Describe"},
+			Args: []ast.Expr{
+				testNameString,
+				&ast.FuncLit{
+					Type: thunkFunctionType,
+					Body: transformedTestCasesBlockStmt,
+				},
+			},
 		}
 
 		// Then, rewrite the declaration to use the new Ginkgo tests,
 		// and wrap them in a "var _ = Describe(...)"
-		// TODO remove triangle of doom
-
 		var rewrittenDecl ast.Decl = &ast.GenDecl{
 			Tok: token.VAR,
 			Specs: []ast.Spec{
@@ -111,22 +61,9 @@ func main() {
 					Names: []*ast.Ident{{
 						Name: "_",
 					}},
-
 					Type: nil,
 					Values: []ast.Expr{
-						&ast.CallExpr{
-							Fun: &ast.Ident{Name: "Describe"},
-							Args: []ast.Expr{
-								&ast.BasicLit{
-									// TODO dynamically read from function name
-									Value: "\"Add\"",
-								},
-								&ast.FuncLit{
-									Type: thunkFunctionType,
-									Body: transformedTestCasesBlockStmt,
-								},
-							},
-						},
+						describeCall,
 					},
 				},
 			},
@@ -134,7 +71,7 @@ func main() {
 		file.Decls[declIndex] = rewrittenDecl
 		continue
 	}
-	
+
 	if err := printer.Fprint(os.Stdout, fset, file); err != nil {
 		log.Fatal(err)
 	}
@@ -150,6 +87,81 @@ func main() {
 	//}
 }
 
+// Transforms any gotest-style tests in the given set of statements
+// to Ginkgo tests.
+func transformTestCases(stmts []ast.Stmt) []ast.Stmt {
+	transformedTestCases := make([]ast.Stmt, len(stmts))
+
+	for i, statement := range stmts {
+		expr, ok := statement.(*ast.ExprStmt)
+		if !ok {
+			continue
+		}
+		callExpr, ok := expr.X.(*ast.CallExpr)
+		if !ok {
+			continue
+		}
+
+		// Make sure that this has shape `t.Run`
+		selector, ok := callExpr.Fun.(*ast.SelectorExpr)
+		if !ok {
+			continue
+		}
+		exprIdentifier, ok := selector.X.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		if !(exprIdentifier.Name == "t" && selector.Sel.Name == "Run") {
+			continue
+		}
+
+		// Extract the test case name
+		testCaseName := callExpr.Args[0]
+		testCaseFuncStmt := callExpr.Args[1]
+
+		testCaseFunc, ok := testCaseFuncStmt.(*ast.FuncLit)
+		if !ok {
+			continue
+		}
+		testCaseFuncStmts := testCaseFunc.Body.List
+		transformedStmts := make([]ast.Stmt, 0)
+		for _, stmt := range testCaseFuncStmts {
+			// Remove `g := NewGomegaWithT(t)`
+			if isGEqualNewGomega(stmt) {
+				continue
+			}
+
+			removed, ok := removeGDot(stmt)
+			if ok {
+				// If we could remove the `g.`, add the transformed statement
+				transformedStmts = append(transformedStmts, removed)
+			} else {
+				// The removal didn't work, this must be some other shape
+				// of statement, so keep it around
+				transformedStmts = append(transformedStmts, stmt)
+			}
+		}
+
+		transformedTestCases[i] = &ast.ExprStmt{
+			X: &ast.CallExpr{
+				Fun: &ast.Ident{Name: "It"},
+				Args: []ast.Expr{
+					testCaseName,
+					&ast.FuncLit{
+						Type: thunkFunctionType,
+						Body: &ast.BlockStmt{List: transformedStmts},
+					},
+				},
+			},
+		}
+	}
+
+	return transformedTestCases
+}
+
+
+// The type of a function that takes no inputs and produces no outputs.
+// Really more of a "unit-returning thunk", but this name is fine.
 var thunkFunctionType = &ast.FuncType{
 	Params: &ast.FieldList{
 		List: []*ast.Field{},
