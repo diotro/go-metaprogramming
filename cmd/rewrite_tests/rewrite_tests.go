@@ -71,7 +71,16 @@ func main() {
 				if isGEqualNewGomega(stmt) {
 					continue
 				}
-				transformedStmts = append(transformedStmts, stmt)
+
+				removed, ok := removeGDot(stmt)
+				if ok {
+					// If we could remove the `g.`, add the transformed statement
+					transformedStmts = append(transformedStmts, removed)
+				} else {
+					// The removal didn't work, this must be some other shape
+					// of statement, so keep it around
+					transformedStmts = append(transformedStmts, stmt)
+				}
 			}
 			transformedTestCases[i] = &ast.ExprStmt{
 				X: &ast.CallExpr{
@@ -79,14 +88,7 @@ func main() {
 					Args: []ast.Expr{
 						testCaseName,
 						&ast.FuncLit{
-							Type: &ast.FuncType{
-								Params: &ast.FieldList{
-									List: []*ast.Field{},
-								},
-								Results: &ast.FieldList{
-									List: []*ast.Field{},
-								},
-							},
+							Type: thunkFunctionType,
 							Body: &ast.BlockStmt{List: transformedStmts},
 						},
 					},
@@ -99,7 +101,9 @@ func main() {
 		}
 
 		// Then, rewrite the declaration to use the new Ginkgo tests,
-		// and wrap them in a "var _ = Describe(...)'
+		// and wrap them in a "var _ = Describe(...)"
+		// TODO remove triangle of doom
+
 		var rewrittenDecl ast.Decl = &ast.GenDecl{
 			Tok: token.VAR,
 			Specs: []ast.Spec{
@@ -114,17 +118,11 @@ func main() {
 							Fun: &ast.Ident{Name: "Describe"},
 							Args: []ast.Expr{
 								&ast.BasicLit{
+									// TODO dynamically read from function name
 									Value: "\"Add\"",
 								},
 								&ast.FuncLit{
-									Type: &ast.FuncType{
-										Params: &ast.FieldList{
-											List: []*ast.Field{},
-										},
-										Results: &ast.FieldList{
-											List: []*ast.Field{},
-										},
-									},
+									Type: thunkFunctionType,
 									Body: transformedTestCasesBlockStmt,
 								},
 							},
@@ -154,8 +152,17 @@ func main() {
 	//}
 }
 
+var thunkFunctionType = &ast.FuncType{
+	Params: &ast.FieldList{
+		List: []*ast.Field{},
+	},
+	Results: &ast.FieldList{
+		List: []*ast.Field{},
+	},
+}
+
+// Is this statement `g := NewGomegaWithT(t)`?
 func isGEqualNewGomega(stmt ast.Stmt) bool {
-	fmt.Printf("%#v\n", stmt)
 	assignStmt, ok := stmt.(*ast.AssignStmt)
 	if !ok || assignStmt.Tok != token.DEFINE {
 		return false
@@ -169,8 +176,6 @@ func isGEqualNewGomega(stmt ast.Stmt) bool {
 		return false
 	}
 
-	fmt.Println("lhs")
-
 	rhsFunc, ok := assignStmt.Rhs[0].(*ast.CallExpr)
 	if !ok {
 		return false
@@ -179,12 +184,68 @@ func isGEqualNewGomega(stmt ast.Stmt) bool {
 	if !ok {
 		return false
 	}
-	fmt.Println("rhs")
 	if rhsFuncIdent.Name != "NewGomegaWithT" {
 		return false
 	}
-	fmt.Println("true")
 	// Could check for rhsFunc's args being `t`, but what other
 	// testing object do you have access to?
 	return true
+}
+
+// Transforms `g.Expect(foo).To(Equal(bar))
+// into `Expect(foo).To(Equal(bar))
+func removeGDot(stmt ast.Stmt) (ast.Stmt, bool) {
+	expr, ok := stmt.(*ast.ExprStmt)
+	if !ok {
+		return nil, false
+	}
+	call, ok := expr.X.(*ast.CallExpr)
+	if !ok {
+		return nil, false
+	}
+	funSelector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil, false
+	}
+	// The identifier at the base of the expression, namely
+	// the `g` in `g.Expect`
+	fmt.Printf("removeGDot %#v\n", funSelector.X)
+	funSelectorExprAsCall, ok := funSelector.X.(*ast.CallExpr)
+	if !ok {
+		return nil, false
+	}
+
+	fmt.Printf("expr %#v\n", funSelectorExprAsCall.Fun)
+	funBaseSelector, ok := funSelectorExprAsCall.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil, false
+	}
+	funBaseIdent, ok := funBaseSelector.X.(*ast.Ident)
+	if !ok {
+		return nil, false
+	}
+	if funBaseIdent.Name != "g" {
+		return nil, false
+	}
+
+	expect := &ast.CallExpr{
+		Fun: &ast.Ident{
+			Name: "Expect",
+		},
+		Args: funSelectorExprAsCall.Args,
+	}
+
+	// This is the "Expect" in `g.Expect`, so we can construct a new
+	// function call with just that selector
+	//selName := funSelector.Sel.Name
+
+	return &ast.ExprStmt{
+		X: &ast.CallExpr{
+			Fun: &ast.SelectorExpr{
+				X:   expect,
+				Sel: &ast.Ident{Name: "To"},
+			},
+			Args: call.Args,
+		},
+	}, true
 }
