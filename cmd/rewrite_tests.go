@@ -19,14 +19,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ast.Inspect(file, func(n ast.Node) bool {
-		fn, ok := n.(*ast.FuncDecl)
+	for declIndex, topLevelDecl := range file.Decls {
+		fn, ok := topLevelDecl.(*ast.FuncDecl)
 		if !ok {
-			return true
+			continue
 		}
 
 		if !strings.HasPrefix(fn.Name.Name, "Test") {
-			return true
+			continue
 		}
 		fmt.Printf("Found test function %s on line %d\n", fn.Name.Name, fset.Position(fn.Pos()).Line)
 
@@ -34,42 +34,67 @@ func main() {
 		for i, statement := range fn.Body.List {
 			expr, ok := statement.(*ast.ExprStmt)
 			if !ok {
-				return true
+				continue
 			}
 			callExpr, ok := expr.X.(*ast.CallExpr)
 			if !ok {
-				return true
+				continue
 			}
 			selector, ok := callExpr.Fun.(*ast.SelectorExpr)
 			if !ok {
-				return true
+				continue
 			}
 			exprIdentifier, ok := selector.X.(*ast.Ident)
 			if !ok {
-				return true
+				continue
 			}
 			if !(exprIdentifier.Name == "t" && selector.Sel.Name == "Run") {
-				return true
+				continue
 			}
 			fmt.Printf("Found t.Run on line %d\n", fset.Position(callExpr.Pos()).Line)
 
-			testCases[i] = ast.Stmt(expr)
+			testCases[i] = expr
 		}
-		testCasesBlock := ast.BlockStmt{
-			Lbrace: 0,
-			List:   testCases,
-			Rbrace: 0,
+
+		var rewrittenDecl ast.Decl = &ast.GenDecl{
+			Tok: token.VAR,
+			Specs: []ast.Spec{
+				&ast.ValueSpec{
+					Names: []*ast.Ident{{
+						Name:    "_",
+					}},
+
+					Type: nil,
+					Values: []ast.Expr{
+						&ast.CallExpr{
+							Fun: &ast.Ident{Name: "Describe"},
+							Args: []ast.Expr{
+								&ast.BasicLit{
+									Value: "\"Add\"",
+								},
+							},
+						},
+					},
+				},
+			},
 		}
-		fn.Body = &testCasesBlock
-		return true
-	})
-	// write new ast to file
-	f, err := os.Create("pkg/out/example_test.go")
-	if err != nil {
+		file.Decls[declIndex] = rewrittenDecl
+		continue
+	}
+
+	fmt.Printf("%#v\n", file.Decls[1])
+
+	if err := printer.Fprint(os.Stdout, fset, file); err != nil {
 		log.Fatal(err)
 	}
-	defer f.Close()
-	if err := printer.Fprint(f, fset, file); err != nil {
-		log.Fatal(err)
-	}
+
+	// Write new ast to file
+	//f, err := os.Create("pkg/out/example_test.go")
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
+	//defer f.Close()
+	//if err := printer.Fprint(os.Stdout, fset, file); err != nil {
+	//	log.Fatal(err)
+	//}
 }
