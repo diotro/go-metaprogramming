@@ -134,9 +134,7 @@ func main() {
 		file.Decls[declIndex] = rewrittenDecl
 		continue
 	}
-
-	fmt.Printf("%#v\n", file.Decls[1])
-
+	
 	if err := printer.Fprint(os.Stdout, fset, file); err != nil {
 		log.Fatal(err)
 	}
@@ -209,13 +207,11 @@ func removeGDot(stmt ast.Stmt) (ast.Stmt, bool) {
 	}
 	// The identifier at the base of the expression, namely
 	// the `g` in `g.Expect`
-	fmt.Printf("removeGDot %#v\n", funSelector.X)
 	funSelectorExprAsCall, ok := funSelector.X.(*ast.CallExpr)
 	if !ok {
 		return nil, false
 	}
 
-	fmt.Printf("expr %#v\n", funSelectorExprAsCall.Fun)
 	funBaseSelector, ok := funSelectorExprAsCall.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return nil, false
