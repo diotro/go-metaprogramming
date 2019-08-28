@@ -9,16 +9,21 @@ import (
 	"log"
 	"os"
 	"strings"
+
+	"golang.org/x/tools/go/ast/astutil"
 )
 
 func main() {
+	filename := "pkg/example/example_test.go"
+
 	// Read the file as an AST, keeping track of line locations, etc
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "pkg/example/example_test.go", nil, parser.ParseComments)
+	file, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	rewroteAtLeastOneTest := false
 	for declIndex, topLevelDecl := range file.Decls {
 		fn, ok := topLevelDecl.(*ast.FuncDecl)
 		if !ok {
@@ -30,14 +35,16 @@ func main() {
 		}
 		fmt.Printf("Found test function %s on line %d\n", fn.Name.Name, fset.Position(fn.Pos()).Line)
 
-		// first: extract each test case and transform it to Ginkgo style
+		// Extract each test case and transform it to Ginkgo style
 		transformedTestCasesBlockStmt := &ast.BlockStmt{
 			List: transformTestCases(fn.Body.List),
 		}
 
+		var newTestName = strings.Replace(fn.Name.Name, "Test", "", 1)
+
 		testNameString := &ast.BasicLit{
 			// Need to wrap in "" to turn from identifier to string. Also, remove Test.
-			Value: "\"" + strings.Replace(fn.Name.Name, "Test", "", 1) + "\"",
+			Value: "\"" + newTestName + "\"",
 		}
 
 		// This is the call to Describe(name, …)
@@ -69,7 +76,12 @@ func main() {
 			},
 		}
 		file.Decls[declIndex] = rewrittenDecl
-		continue
+		rewroteAtLeastOneTest = true
+	}
+
+	// If a test was rewritten, then we'll need the ginkgo import
+	if rewroteAtLeastOneTest {
+		astutil.AddNamedImport(fset, file, ".", "github.com/onsi/ginkgo")
 	}
 
 	if err := printer.Fprint(os.Stdout, fset, file); err != nil {
@@ -77,14 +89,33 @@ func main() {
 	}
 
 	// Write new ast to file
-	//f, err := os.Create("pkg/out/example_test.go")
-	//if err != nil {
-	//	log.Fatal(err)
-	//}
-	//defer f.Close()
-	//if err := printer.Fprint(os.Stdout, fset, file); err != nil {
-	//	log.Fatal(err)
-	//}
+	outputFilename:= strings.Replace(filename, ".go", "_REWRITTEN.go", 1)
+	f, err := os.Create(outputFilename)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	if err := printer.Fprint(f, fset, file); err != nil {
+		log.Fatal(err)
+	}
+
+	// Ok, yeah, this bit is lazy, don't judge me
+	appendFile, err := os.OpenFile(outputFilename, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		panic(err)
+	}
+
+	defer appendFile.Close()
+
+	bootstrapTest := `
+func Test(t *testing.T) {
+    RegisterFailHandler(Fail)
+    RunSpecs(t, "TODO FILL THIS IN Suite")
+}
+`
+	if _, err = appendFile.WriteString(bootstrapTest); err != nil {
+		fmt.Printf("Failed adding bootstrap test: %s\n", err)
+	}
 }
 
 // Transforms any gotest-style tests in the given set of statements
@@ -131,10 +162,10 @@ func transformTestCases(stmts []ast.Stmt) []ast.Stmt {
 				continue
 			}
 
-			removed, ok := removeGDot(stmt)
+			fixed, ok := removeGDot(stmt)
 			if ok {
 				// If we could remove the `g.`, add the transformed statement
-				transformedStmts = append(transformedStmts, removed)
+				transformedStmts = append(transformedStmts, fixed)
 			} else {
 				// The removal didn't work, this must be some other shape
 				// of statement, so keep it around
@@ -144,7 +175,7 @@ func transformTestCases(stmts []ast.Stmt) []ast.Stmt {
 
 		transformedTestCases[i] = &ast.ExprStmt{
 			X: &ast.CallExpr{
-				Fun: &ast.Ident{Name: "It"},
+				Fun: &ast.Ident{Name: "Specify"},
 				Args: []ast.Expr{
 					testCaseName,
 					&ast.FuncLit{
