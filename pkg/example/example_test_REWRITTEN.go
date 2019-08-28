@@ -20,4 +20,3 @@ func Test(t *testing.T) {
     RegisterFailHandler(Fail)
     RunSpecs(t, "TODO FILL THIS IN Suite")
 }
-

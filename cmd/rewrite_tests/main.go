@@ -104,9 +104,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-
 	defer appendFile.Close()
-
 	bootstrapTest := `
 func Test(t *testing.T) {
     RegisterFailHandler(Fail)

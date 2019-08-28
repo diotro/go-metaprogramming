@@ -19,5 +19,5 @@ func () {
 
 	inner := expr.(*ast.FuncLit).Body.List[0]
 
-	fmt.Printf("%#v\n", inner)
+	fmt.Printf("\n\n%#v\n", inner)
 }
