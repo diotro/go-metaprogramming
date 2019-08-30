@@ -9,7 +9,7 @@ import (
 func main() {
 	exprStr := `
 func () {
-	g := NewGomegaWithT(t)
+	3 + (2 + 3)
 }
 `
 	expr, err := parser.ParseExpr(exprStr)
@@ -19,5 +19,5 @@ func () {
 
 	inner := expr.(*ast.FuncLit).Body.List[0]
 
-	fmt.Printf("\n\n%#v\n", inner)
+	fmt.Printf("\n\n%#v\n", inner.(*ast.ExprStmt).X.(*ast.BinaryExpr))
 }
