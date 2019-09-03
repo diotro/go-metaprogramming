@@ -33,49 +33,16 @@ func main() {
 		if !strings.HasPrefix(fn.Name.Name, "Test") {
 			continue
 		}
-		fmt.Printf("Found test function %s on line %d\n", fn.Name.Name, fset.Position(fn.Pos()).Line)
+		fmt.Printf("Found test function %s on line %d\n",
+			fn.Name.Name, fset.Position(fn.Pos()).Line)
 
 		// Extract each test case and transform it to Ginkgo style
 		transformedTestCasesBlockStmt := &ast.BlockStmt{
 			List: transformTestCases(fn.Body.List),
 		}
 
-		var newTestName = strings.Replace(fn.Name.Name, "Test", "", 1)
-
-		testNameString := &ast.BasicLit{
-			// Need to wrap in "" to turn from identifier to string. Also, remove Test.
-			Value: "\"" + newTestName + "\"",
-		}
-
-		// This is the call to Describe(name, …)
-		describeCall := &ast.CallExpr{
-			Fun: &ast.Ident{Name: "Describe"},
-			Args: []ast.Expr{
-				testNameString,
-				&ast.FuncLit{
-					Type: thunkFunctionType,
-					Body: transformedTestCasesBlockStmt,
-				},
-			},
-		}
-
-		// Then, rewrite the declaration to use the new Ginkgo tests,
-		// and wrap them in a "var _ = Describe(...)"
-		var rewrittenDecl ast.Decl = &ast.GenDecl{
-			Tok: token.VAR,
-			Specs: []ast.Spec{
-				&ast.ValueSpec{
-					Names: []*ast.Ident{{
-						Name: "_",
-					}},
-					Type: nil,
-					Values: []ast.Expr{
-						describeCall,
-					},
-				},
-			},
-		}
-		file.Decls[declIndex] = rewrittenDecl
+		newTest := wrapInDescribe(fn.Name.Name, transformedTestCasesBlockStmt)
+		file.Decls[declIndex] = newTest
 		rewroteAtLeastOneTest = true
 	}
 
@@ -95,6 +62,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer f.Close()
+
 	if err := printer.Fprint(f, fset, file); err != nil {
 		log.Fatal(err)
 	}
@@ -285,4 +253,44 @@ func removeGDot(stmt ast.Stmt) (ast.Stmt, bool) {
 			Args: call.Args,
 		},
 	}, true
+}
+
+// Wraps the given test cases in
+// `var _ = Describe("testName", func() { ... })
+func wrapInDescribe(oldTestName string, transformedTestCases *ast.BlockStmt) ast.Decl{
+
+	// Need to wrap in "" to turn from identifier to string. Also, remove Test.
+	newTestName := strings.Replace(oldTestName, "Test", "", 1)
+	testNameLit := &ast.BasicLit{
+		Value: "\"" + newTestName + "\"",
+	}
+
+	// This is the call to Describe(name, …)
+	describeCall := &ast.CallExpr{
+		Fun: &ast.Ident{Name: "Describe"},
+		Args: []ast.Expr{
+			testNameLit,
+			&ast.FuncLit{
+				Type: thunkFunctionType,
+				Body: transformedTestCases,
+			},
+		},
+	}
+
+	// Then, rewrite the declaration to use the new Ginkgo tests,
+	// and wrap them in a "var _ = Describe(...)"
+	return &ast.GenDecl{
+		Tok: token.VAR,
+		Specs: []ast.Spec{
+			&ast.ValueSpec{
+				Names: []*ast.Ident{{
+					Name: "_",
+				}},
+				Type: nil,
+				Values: []ast.Expr{
+					describeCall,
+				},
+			},
+		},
+	}
 }
